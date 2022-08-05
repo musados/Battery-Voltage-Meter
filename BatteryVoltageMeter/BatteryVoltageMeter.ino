@@ -1,10 +1,12 @@
 
 #include <Adafruit_NeoPixel.h>
 #include <SoftwareSerial.h>
+#include "MySerial.h"
+#include <inttypes.h>
 #ifdef __AVR__
 #include <avr/power.h> // Required for 16 MHz Adafruit Trinket
 #endif
-
+float getTemperature(int, char);
 #define PIN        2
 #define NUMPIXELS 5
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
@@ -24,13 +26,20 @@ float min_safe_battery_voltage = 6.4;
 
 int tx_pin = 0;
 int rx_pin = 1;
-SoftwareSerial mySerial(rx_pin, tx_pin); // RX, TX
+
+int thermPin = A6;
+char tempOpt = 'c'; //0:C, 1:K, 2:F
+
+MySerial mySerial(rx_pin, tx_pin); // RX, TX
+char* app_version = "1.0.0";
 
 void setup() {
-  //  Serial.begin(115200);
+//    Serial.begin(9600);
   mySerial.begin(115200);
   pinMode(A0, INPUT);
   pinMode(A1, INPUT);
+  pinMode(thermPin, INPUT);
+  
   //Serial.println(analogRead(A1));
 #if defined(__AVR_ATtiny85__) && (F_CPU == 16000000)
   clock_prescale_set(clock_div_1);
@@ -41,15 +50,17 @@ void setup() {
 bool isShowTime = false;
 
 void loop() {
+  float temperature = getTemperature(thermPin, tempOpt);
   float batt_voltage = calculateVoltage();
-  //Serial.println("batt_volt: " + String(batt_voltage));
   float batt_percents = getSafeBatteryPercents(batt_voltage);
-  //  Serial.print("Battery percents: ");
-  //  Serial.println(batt_percents);
   int chargeVal = analogRead(chargingPin);
   isCharging = chargeVal > 10 ? true : false;
-//  Serial.println(String(isCharging ? "Charging... :)" : "Not charging!"));
 
+ char buff[256];
+  sprintf(buff,"MN%s|%d|%d|%d|%d@", app_version, (int)(batt_voltage*1000.0f), (int)batt_percents, (int)isCharging, (int)(temperature*1000.0f));
+ 
+  mySerial.printf(buff);
+  
   // The first NeoPixel in a strand is #0, second is 1, all the way up
   // to the count of pixels minus one.
   if (batt_percents < 100) {
@@ -205,4 +216,52 @@ int getBandgap(void) // Returns actual value of Vcc (x 100)
   int results = (((InternalReferenceVoltage * 1024L) / ADC) + 5L) / 10L; // calculates for straight line value
   return results;
 
+}
+
+//These values are in the datasheet
+#define RT0 10000   // Ω
+#define B 3977      // K
+//--------------------------------------
+
+
+#define VCC 5    //Supply voltage
+#define R 10000  //R=10KΩ
+
+
+float getTemperature(int pin, char opt) {
+  //Variables
+  float RT, VR, ln, TX, T0, VRT;
+  T0 = 25 + 273.15;
+  VRT = analogRead(pin);              //Acquisition analog value of VRT
+  VRT = (5.00 / 1023.00) * VRT;      //Conversion to voltage
+  VR = VCC - VRT;
+  RT = VRT / (VR / R);               //Resistance of RT
+
+  ln = log(RT / RT0);
+  TX = (1 / ((ln / B) + (1 / T0))); //Temperature from thermistor
+
+  TX = TX - 273.15;                 //Conversion to Celsius
+
+  switch(opt){
+    case 'c':
+    case 'C':
+    return TX;
+    case 'k':
+    case 'K':
+    return TX + 273.15;
+    case 'f':
+    case 'F':
+    return (TX * 1.8) + 32;
+
+    default:
+    return TX;
+  }
+//  Serial.print("Temperature:");
+//  Serial.print("\t");
+//  Serial.print(TX);
+//  Serial.print("C\t\t");
+//  Serial.print(TX + 273.15);        //Conversion to Kelvin
+//  Serial.print("K\t\t");
+//  Serial.print((TX * 1.8) + 32);    //Conversion to Fahrenheit
+//  Serial.println("F");
 }
